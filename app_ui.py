@@ -6,6 +6,7 @@ from accounts import storage_for_session
 from availability import COUNTRIES, PROVIDERS, provider_labels
 from pair_catalogue import retrieve_candidates, seed_context
 from pair_ui import render_selection
+from solo_helpers import clean_title, spread_sample, read_solo_output
 from pair_recommendations import RecommendationError, select_pair, title_key, to_display_text
 import html
 import json
@@ -39,7 +40,7 @@ OPENAI_MODEL = get_secret_value("OPENAI_MODEL", "gpt-4o-mini")
 client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0, max_retries=1) if OPENAI_API_KEY else None
 supabase = storage_for_session(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
 
-def call_openai_text(prompt: str, fallback: str = "", schema=None) -> str:
+def call_openai_text(prompt: str, fallback: str = "", schema=None, fast=False) -> str:
     """
     Safely calls the OpenAI API and returns text.
     Prevents ugly Streamlit tracebacks if quota/billing/rate limits/API errors happen.
@@ -57,7 +58,8 @@ def call_openai_text(prompt: str, fallback: str = "", schema=None) -> str:
         options = {}
         if schema:
             options["text"] = {"format": {"type": "json_schema", "name": "shared_movie_selection", "strict": True, "schema": schema}}
-        response = client.responses.create(
+        request_client = client.with_options(timeout=25.0, max_retries=0) if fast else client
+        response = request_client.responses.create(
             **options,
             model=OPENAI_MODEL,
             input=prompt,
@@ -306,11 +308,7 @@ def dedupe_titles(titles):
     return result
 
 def clean_movie_title(raw_title: str) -> str:
-    title = str(raw_title or "").strip()
-    title = title.rstrip(",;")
-    title = re.sub(r"^\s*[-*•]\s*", "", title)
-    title = re.sub(r"\s+", " ", title).strip()
-    return title
+    return clean_title(raw_title)
 
 
 def parse_movie_input(text: str) -> list[str]:
@@ -427,7 +425,7 @@ Rules:
 Return JSON only.
 """
     try:
-        text = call_openai_text(prompt)
+        text = call_openai_text(prompt, fast=True)
 
         # FIX: Strip out any markdown formatting that breaks the JSON parser
         clean_json = text.replace("```json", "").replace("```", "").strip()
@@ -1165,131 +1163,22 @@ def build_year_distribution(candidates: list[dict]) -> dict:
     return distribution
 
 def get_watchmode_candidates_catalogue(movie_titles: list[str], blueprint: dict, max_candidates: int = 36, debug_mode: bool = False):
-    debug = {
-        "input_movie_titles": movie_titles,
-        "viewing_mode": (blueprint or {}).get("viewing_mode", ""),
-        "seed_profile": {},
-        "seed_count": 0,
-        "top_genre_names": [],
-        "top_genre_ids": [],
-        "avg_year": None,
-        "filters_by_lane": {},
-        "rows_by_lane_page": [],
-        "era_band_counts": {},
-        "deduped_count": 0,
-        "removed_by_junk_or_seed": 0,
-        "enriched_count": 0,
-        "final_returned_count": 0,
-        "final_year_distribution": {},
-        "errors": [],
-    }
-    st.session_state.watchmode_candidate_debug = debug
-    if debug_mode:
-        st.session_state.watchmode_list_debug = {"candidate_calls": [], "comparison_calls": []}
-
+    """Bounded metadata work regardless of the length of the full taste list."""
+    sample = spread_sample(movie_titles, 6)
+    st.session_state.solo_catalogue_notice = ""
     try:
-        if not watchmode_enabled():
-            debug["errors"].append("Watchmode disabled")
-            return []
-
-        seed_profile = get_watchmode_seed_profile(movie_titles, debug_mode)
-        seeds = seed_profile["seeds"]
-        debug.update({
-            "seed_profile": seed_profile,
-            "seed_count": len(seeds),
-            "top_genre_names": seed_profile.get("top_genre_names", []),
-            "top_genre_ids": seed_profile.get("top_genre_ids", []),
-            "avg_year": seed_profile.get("avg_year"),
-        })
-        if not seeds:
-            debug["errors"].append("No seed movies found")
-            return []
-
-        run_watchmode_list_debug_comparisons()
-
-        seed_ids = {seed.get("id") for seed in seeds if seed.get("id")}
-        seed_title_norms = {normalize_title(seed["title"]) for seed in seeds if seed.get("title")}
-        all_rows = []
-
-        for lane in ["core", "adjacent", "wildcard"]:
-            base_filters = build_catalogue_filters(seed_profile, blueprint, lane=lane)
-            debug["filters_by_lane"][lane] = {}
-            for era_name in get_lane_era_band_names(lane):
-                filters = apply_era_band_to_filters(base_filters, era_name)
-                debug["filters_by_lane"][lane][era_name] = filters
-                debug["era_band_counts"].setdefault(era_name, {"fetched": 0, "kept_after_filter": 0})
-                for page in [1, 2]:
-                    try:
-                        debug_filters = dict(filters)
-                        debug_filters["_debug_label"] = f"{lane}_{era_name}_page_{page}"
-                        rows = watchmode_list_titles_filtered(debug_filters, page=page)
-                        debug["era_band_counts"][era_name]["fetched"] += len(rows)
-                        debug["rows_by_lane_page"].append({
-                            "lane": lane,
-                            "era_band": era_name,
-                            "page": page,
-                            "row_count": len(rows),
-                        })
-                    except Exception as e:
-                        rows = []
-                        debug["rows_by_lane_page"].append({
-                            "lane": lane,
-                            "era_band": era_name,
-                            "page": page,
-                            "row_count": 0,
-                            "error": type(e).__name__,
-                        })
-                        debug["errors"].append(f"{lane} {era_name} page {page}: {type(e).__name__}")
-                    for row in rows:
-                        row["_lane_bucket"] = lane
-                        row["_era_band"] = era_name
-                        all_rows.append(row)
-
-        deduped = {}
-        removed_by_junk_or_seed = 0
-        for item in all_rows:
-            title = item.get("title", "").strip()
-            if not title:
-                removed_by_junk_or_seed += 1
-                continue
-            norm = normalize_title(title)
-            if item.get("id") in seed_ids or norm in seed_title_norms or is_junk_candidate(item, blueprint) or is_future_candidate(item):
-                removed_by_junk_or_seed += 1
-                continue
-            era_name = item.get("_era_band")
-            if era_name in debug["era_band_counts"]:
-                debug["era_band_counts"][era_name]["kept_after_filter"] += 1
-            if norm not in deduped:
-                deduped[norm] = item
-
-        debug["deduped_count"] = len(deduped)
-        debug["removed_by_junk_or_seed"] = removed_by_junk_or_seed
-
-        enriched = []
-        for candidate in deduped.values():
-            try:
-                details = watchmode_get_title_details(candidate.get("id"))
-                normalized = normalize_watchmode_title(details) if details else candidate
-                if not normalized or is_junk_candidate(normalized, blueprint) or is_future_candidate(normalized):
-                    continue
-                normalized["_lane_bucket"] = candidate.get("_lane_bucket", "core")
-                normalized["candidate_score"] = score_watchmode_candidate(normalized, seed_profile, blueprint)
-
-                if normalized["_lane_bucket"] == "core": normalized["candidate_score"] += 1.0
-                elif normalized["_lane_bucket"] == "adjacent": normalized["candidate_score"] += 0.5
-                else: normalized["candidate_score"] += 0.25
-                enriched.append(normalized)
-            except Exception as e:
-                debug["errors"].append(f"enrich {candidate.get('title', candidate.get('id'))}: {type(e).__name__}")
-
-        debug["enriched_count"] = len(enriched)
-        enriched.sort(key=lambda x: x.get("candidate_score", 0), reverse=True)
-        final_candidates = diversify_candidates_mmr(enriched, shortlist_size=max_candidates)[:max_candidates]
-        debug["final_returned_count"] = len(final_candidates)
-        debug["final_year_distribution"] = build_year_distribution(final_candidates)
-        return final_candidates
-    except Exception as e:
-        debug["errors"].append(type(e).__name__)
+        candidates = retrieve_candidates(
+            watchmode_get, watchmode_search_movie,
+            lambda movie_id: watchmode_get(f"/title/{movie_id}/details/", {"append_to_response": "sources"}),
+            normalize_watchmode_title, [sample[:3], sample[3:]],
+            {"mood": "Anything", "detail_limit": 12, "time_budget": 35}, movie_titles,
+            st.session_state.setdefault("solo_catalogue_cache", {}),
+        )
+        if not candidates:
+            st.session_state.solo_catalogue_notice = "No suitable catalogue candidates were confirmed. The taste analysis uses your full list; recommendations are AI-only and not catalogue-verified."
+        return candidates[:max_candidates]
+    except Exception:
+        st.session_state.solo_catalogue_notice = "Movie lookups took too long or were unavailable. The taste analysis uses your full list; recommendations are AI-only and not catalogue-verified."
         return []
 
 
@@ -2199,7 +2088,12 @@ Do not include any conversational filler.
 Return ONLY the raw JSON object.
 """
 
-def get_solo_response(profile_name: str, movies: list[str], reroll_count: int, saved_movies=None, rejected_movies=None, seen_movies=None, taste_summary="", latest_taste_read="") -> str:
+def get_solo_response(profile_name: str, movies: list[str], reroll_count: int, saved_movies=None, rejected_movies=None, seen_movies=None, taste_summary="", latest_taste_read="", progress=None) -> str:
+    if client is None:
+        st.info("Connect your OpenAI key to analyse your taste.")
+        return ""
+    report = progress or (lambda message: None)
+    report(f"Reading all {len(movies)} films in your list…")
     debug_mode = st.session_state.get("debug_mode", False)
     blueprint = infer_taste_blueprint(movies, debug_mode)
     active_profile = load_profiles().get(profile_name, empty_profile_record()) if profile_name else None
@@ -2244,7 +2138,9 @@ Avoid repeating the same recommendation logic from the previous attempt.
         "sample_metadata": {},
     }
 
+    st.session_state.solo_catalogue_notice = ""
     if watchmode_enabled():
+        report("Checking a small sample of films and looking for new picks…")
         try:
             raw_candidates = get_watchmode_candidates_catalogue(movies, blueprint, 36, debug_mode)
             final_candidates = filter_candidate_pool(profile_name, active_profile, raw_candidates) if active_profile else raw_candidates
@@ -2294,7 +2190,8 @@ Avoid repeating the same recommendation logic from the previous attempt.
         active_profile
     )
 
-    output = call_openai_text(prompt)
+    report("Writing your taste profile and recommendations…")
+    output = call_openai_text(prompt, fast=True)
 
     if output and profile_name and active_profile:
         parsed = parse_solo_recommendations(output)
@@ -2322,8 +2219,14 @@ Avoid repeating the same recommendation logic from the previous attempt.
                 blueprint,
                 active_profile
             )
-            output = call_openai_text(retry_prompt, fallback=output)
+            output = call_openai_text(retry_prompt, fast=True)
 
+    if output:
+        try:
+            read_solo_output(output)
+        except (ValueError, TypeError):
+            st.warning("The taste analysis was incomplete. Please try again; you do not need to shorten your movie list.")
+            return ""
     return output
 
 def get_pair_response(user_one_name: str, movies_one: list[str], user_two_name: str, movies_two: list[str], reroll_count: int, excluded_titles=None, extra_retry_instruction: str = "") -> str:
@@ -2446,14 +2349,16 @@ if st.session_state.app_mode == "solo":
         else:
             st.session_state.solo_reroll = st.session_state.solo_reroll + 1 if reroll_clicked else 0
             st.session_state.solo_active_profile = selected_profile if active_profile else ""
-            with st.spinner("Understanding your taste..."):
+            with st.status("Starting your taste analysis…", expanded=True) as solo_status:
                 st.session_state.solo_output = get_solo_response(
                     profile_name=selected_profile if active_profile else "", movies=movies, reroll_count=st.session_state.solo_reroll,
                     saved_movies=active_profile["saved_movies"] if active_profile else [], rejected_movies=active_profile["rejected_movies"] if active_profile else [],
-                    seen_movies=active_profile["seen_movies"] if active_profile else [], taste_summary=active_profile["taste_summary"] if active_profile else ""
+                    seen_movies=active_profile["seen_movies"] if active_profile else [], taste_summary=active_profile["taste_summary"] if active_profile else "",
+                    progress=lambda message: solo_status.update(label=message)
                 )
+                solo_status.update(label="Taste analysis complete" if st.session_state.solo_output else "Analysis could not finish—see the message below", state="complete" if st.session_state.solo_output else "error", expanded=False)
 
-            if active_profile:
+            if active_profile and st.session_state.solo_output:
                 latest_read = ""
 
                 try:
@@ -2490,6 +2395,10 @@ if st.session_state.app_mode == "solo":
                 save_profiles(profile_update_data)
 
     if st.session_state.solo_output and movies:
+        if st.session_state.get("solo_catalogue_notice"):
+            st.info(st.session_state.solo_catalogue_notice)
+        elif not watchmode_enabled():
+            st.caption("Taste analysis uses your full list. Recommendation metadata is not catalogue-verified.")
         render_solo_results(st.session_state.solo_output, profiles)
 
 else:

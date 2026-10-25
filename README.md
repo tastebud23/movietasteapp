@@ -63,6 +63,12 @@ The SQL is rerunnable for the new schema; it does not upgrade incompatible exist
 - Recommendation rules, catalogue retrieval and structured results rendering live in `pair_recommendations.py`, `pair_catalogue.py` and `pair_ui.py`. The legacy solo flow remains in `app_ui.py`.
 - API errors omit sensitive request details. OpenAI calls have timeouts, bounded output and a per-session throttle. This is not a deployment-wide spending limit: add provider budgets and a shared rate limiter before unrestricted public use.
 
+## Solo analysis of long lists
+
+Solo analysis retains the full input list in both AI prompts. Numbered-list prefixes are removed without changing numeric titles such as `1917`. Up to six evenly spaced favourites (including the beginning and end) are sampled for catalogue discovery, with no extra AI title-sanitisation request. Catalogue enrichment is capped at 12 entries, uses the shared session cache, and stops starting lookups after a 35-second budget. A request already underway can finish after that budget. If discovery fails, solo completes with an explicit AI-only metadata notice. This fallback does not apply to restricted shared recommendations.
+
+Solo model calls use a 25-second timeout with automatic retries disabled. The interface reports reading, catalogue lookup and writing stages, and marks failed analyses as failed rather than leaving a success indicator. Long-list mechanics and timeout recovery are tested with mocks; actual provider speed on the user's machine still requires retesting.
+
 ## Validation
 
 ```bash

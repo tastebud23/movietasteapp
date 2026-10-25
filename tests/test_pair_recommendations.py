@@ -70,7 +70,8 @@ def test_empty_api_result_does_not_retry_or_pretend_success():
     assert call.call_count == 1
 
 
-def test_catalogue_interleaves_viewers_and_periods_and_reuses_cache():
+@pytest.mark.parametrize('limit,expected', [(12, 12), (30, 18)])
+def test_catalogue_interleaves_viewers_and_periods_and_reuses_cache(limit, expected):
     searches = {'Seed A': {'id': 'a'}, 'Seed B': {'id': 'b'}}
     metadata = {'a': movie('a', 'Seed A') | {'genre_ids': [10]},
                 'b': movie('b', 'Seed B') | {'genre_ids': [20]}}
@@ -88,14 +89,14 @@ def test_catalogue_interleaves_viewers_and_periods_and_reuses_cache():
     details = Mock(side_effect=lambda i: metadata[i])
     cache = {}
     result = retrieve_candidates(fetch, lambda t: searches[t], details, lambda m: m,
-                                 [['Seed A'], ['Seed B']], {}, [], cache)
+                                 [['Seed A'], ['Seed B']], {'detail_limit': limit}, [], cache)
     requested = [c.args[0] for c in details.call_args_list]
     assert '0-0-0' in requested and '1-0-0' in requested and '2-0-0' in requested
     assert {m['year'] for m in result} == {1998, 2010, 2020}
-    assert len(result) == 18 and details.call_count <= 32
+    assert len(result) == expected and details.call_count <= limit + 2
     count = details.call_count
     retrieve_candidates(fetch, lambda t: searches[t], details, lambda m: m,
-                        [['Seed A'], ['Seed B']], {}, [], cache)
+                        [['Seed A'], ['Seed B']], {'detail_limit': limit}, [], cache)
     assert details.call_count == count and fetch.call_count == 9
 
 

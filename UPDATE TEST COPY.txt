@@ -1,3 +1,14 @@
+SOLO LOADING FIX — LATEST UPDATE
+
+If you already installed the previous shared-picker update, copy these THREE files from the newest download into your existing app folder:
+  app_ui.py (replace)
+  pair_catalogue.py (replace)
+  solo_helpers.py (NEW — must be copied too)
+
+Stop the running app first with Control+C. Keep .streamlit/secrets.toml and your .venv as they are. No installation changes are needed. Restart using the same working command.
+
+Solo mode now reads the full movie list while limiting catalogue work. A numbered list is accepted. You can retry the same long list; it shows reading, lookup and writing stages. If catalogue lookups fail or take too long, recommendations are labelled AI-only rather than continuing the old unbounded lookup loop.
+
 UPDATING THE TEST COPY YOU ALREADY HAVE
 
 No new Python packages are needed for this update.

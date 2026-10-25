@@ -9,7 +9,7 @@ from pair_recommendations import choose_candidates, title_key
 def retrieve_candidates(get, search, details, normalize, favourites, preferences, excluded, cache):
     started = time.monotonic()
     def cached(key, fetch):
-        if time.monotonic() - started > 75:
+        if time.monotonic() - started > preferences.get('time_budget', 75):
             raise TimeoutError("Catalogue search time budget exceeded")
         entry = cache.get(key)
         if entry and time.monotonic() - entry[0] < 900:
@@ -63,7 +63,7 @@ def retrieve_candidates(get, search, details, normalize, favourites, preferences
                 rows.setdefault(str(title_id), (title_id, start_year, end_year))
     # Interleave lanes before bounded detail requests so every viewer gets coverage.
     movies = []
-    for title_id, start_year, end_year in list(rows.values())[:30]:
+    for title_id, start_year, end_year in list(rows.values())[:preferences.get('detail_limit', 30)]:
         movie = full(title_id)
         if movie and isinstance(movie.get('year'), int) and start_year <= movie['year'] <= end_year:
             movies.append(movie)
