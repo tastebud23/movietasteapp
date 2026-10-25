@@ -87,8 +87,8 @@ def choose_candidates(movies, seeds_one, seeds_two, preferences, excluded):
     return chosen
 
 
-def build_prompt(names, favourites, preferences, candidates, excluded, memories):
-    data = {'viewers': [{'name': n, 'favourites': f, 'memory': m} for n, f, m in zip(names, favourites, memories)],
+def build_prompt(names, favourites, preferences, candidates, excluded, memories, seed_metadata=None):
+    data = {'checked_favourite_details': seed_metadata or [[], []], 'viewers': [{'name': n, 'favourites': f, 'memory': m} for n, f, m in zip(names, favourites, memories)],
             'tonight': preferences, 'excluded_titles': list(excluded),
             'candidates': [{k: m.get(k) for k in ('id', 'title', 'year', 'genre_names', 'runtime_minutes', 'us_rating')} |
                            {'plot_overview': str(m.get('plot_overview', ''))[:600]} for m in candidates]}
@@ -96,7 +96,9 @@ def build_prompt(names, favourites, preferences, candidates, excluded, memories)
 Return JSON matching the supplied schema. Balance both viewers: favour a good fit for the less well-served viewer over a perfect fit for just one.
 Safe is the strongest shared fit; compromise fairly balances a real difference; wildcard offers a different but defensible connection.
 Give three distinct films. best_slot must identify one of those three, not a fourth film.
-For each pick, for_one and for_two must explain a specific connection to each viewer's favourites or feedback, in one short sentence each. tradeoff must state a real limitation or mood mismatch, not praise.
+For each pick, for_one and for_two must name at least one film from the CORRECT viewer’s favourites explicitly and explain a specific connection to each viewer's favourites or feedback, in one short sentence each. tradeoff must state a real limitation or mood mismatch, not praise.
+Connect a specific storytelling feature (e.g. puzzle solving, uneasy humour, outsiders bonding, tension, pacing or emotional payoff) supported by supplied plot information. Genre overlap alone or generic "emotional depth" is insufficient. Do not assume a cheerful personality or other personal traits from film choices.
+Use checked favourite details when available; do not invent movie facts. If an exact match is weak, state the limitation rather than invent an affinity. Release recency is not a benefit by itself; select by fit across all supplied periods.
 Do not claim measured probabilities, guaranteed enjoyment, or streaming availability. Avoid generic flattery. Use plain conversational language.
 When candidates are supplied, select ONLY those candidate_id values and copy their titles exactly. Never invent or substitute candidates.
 When candidates are empty, use candidate_id="" and give AI-only suggestions. These have not been catalogue-verified.
@@ -104,7 +106,19 @@ Do not recommend excluded_titles, sequels of them as a substitute, or favourites
 ''' + json.dumps(data, ensure_ascii=False)
 
 
-def validate_selection(raw, candidates, excluded):
+
+def mentions_favourite(text, favourites):
+    def words(value):
+        value = unicodedata.normalize('NFKD', value).casefold()
+        return re.findall(r'[^\W_]+', ''.join(c for c in value if not unicodedata.combining(c)))
+    text_words = words(text)
+    for title in favourites:
+        parts = words(re.sub(r'\s*\(\d{4}\)\s*$', '', title))
+        if parts and any(text_words[i:i + len(parts)] == parts for i in range(len(text_words) - len(parts) + 1)):
+            return True
+    return False
+
+def validate_selection(raw, candidates, excluded, favourites=None):
     try:
         data = json.loads(raw)
         if not isinstance(data, dict) or data.get('best_slot') not in SLOTS:
@@ -132,22 +146,26 @@ def validate_selection(raw, candidates, excluded):
                 raise ValueError()
             if not all(0 < len(pick[k].strip()) <= 600 for k in ('for_one', 'for_two', 'tradeoff')):
                 raise ValueError()
+            if favourites:
+                for field, titles in zip(('for_one', 'for_two'), favourites):
+                    if not mentions_favourite(pick[field], titles):
+                        raise ValueError()
             seen.add(key)
         return data
     except (ValueError, TypeError, KeyError, AttributeError):
         raise RecommendationError('The response did not meet the movie selection rules.') from None
 
 
-def select_pair(call_ai, candidates, names, favourites, preferences, excluded, memories):
-    prompt = build_prompt(names, favourites, preferences, candidates, excluded, memories)
+def select_pair(call_ai, candidates, names, favourites, preferences, excluded, memories, seed_metadata=None):
+    prompt = build_prompt(names, favourites, preferences, candidates, excluded, memories, seed_metadata)
     for attempt in range(2):
         raw = call_ai(prompt, schema=PAIR_SCHEMA)
         if not raw:  # An API error has already been explained by the caller.
             return None
         try:
-            return validate_selection(raw, candidates, excluded)
+            return validate_selection(raw, candidates, excluded, favourites)
         except RecommendationError:
-            prompt += '\nThe previous response failed validation. Return three distinct, permitted films with complete viewer-specific explanations and a valid best_slot.'
+            prompt += '\nThe previous response failed validation. Return three distinct, permitted films with complete viewer-specific explanations naming a favourite from each correct viewer, and a valid best_slot.'
     raise RecommendationError('We couldn’t find a valid set of fresh picks. Try different preferences or start a fresh movie session.')
 
 

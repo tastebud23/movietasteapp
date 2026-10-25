@@ -4,7 +4,7 @@ import os
 import time
 from accounts import storage_for_session
 from availability import COUNTRIES, PROVIDERS, provider_labels
-from pair_catalogue import retrieve_candidates
+from pair_catalogue import retrieve_candidates, seed_context
 from pair_ui import render_selection
 from pair_recommendations import RecommendationError, select_pair, title_key, to_display_text
 import html
@@ -2370,7 +2370,8 @@ def get_pair_response(user_one_name: str, movies_one: list[str], user_two_name: 
     try:
         selection = select_pair(call_openai_text, candidates,
                                 [user_one_name or "You", user_two_name or "Friend"],
-                                [movies_one, movies_two], preferences, excluded, memories)
+                                [movies_one, movies_two], preferences, excluded, memories,
+                                seed_metadata=seed_context(st.session_state.get("pair_catalogue_cache", {}), [movies_one, movies_two], normalize_watchmode_title))
     except RecommendationError as error:
         st.warning(str(error))
         return ""

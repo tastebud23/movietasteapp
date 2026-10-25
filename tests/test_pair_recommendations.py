@@ -70,24 +70,63 @@ def test_empty_api_result_does_not_retry_or_pretend_success():
     assert call.call_count == 1
 
 
-def test_catalogue_interleaves_both_viewers_and_reuses_cache():
+def test_catalogue_interleaves_viewers_and_periods_and_reuses_cache():
     searches = {'Seed A': {'id': 'a'}, 'Seed B': {'id': 'b'}}
     metadata = {'a': movie('a', 'Seed A') | {'genre_ids': [10]},
                 'b': movie('b', 'Seed B') | {'genre_ids': [20]}}
-    for n in range(60):
-        metadata[str(n)] = movie(str(n), f'Film {n}')
     def get(endpoint, params):
-        offset = {'10': 0, '20': 20, None: 40}[params.get('genres')]
-        return {'titles': [{'id': str(i)} for i in range(offset, offset + 18)]}
+        viewer = {'10': 0, '20': 1, None: 2}[params.get('genres')]
+        era = {'19000101': 0, '20050101': 1, '20180101': 2}[params['release_date_start']]
+        year = [1998, 2010, 2020][era]
+        rows = []
+        for i in range(12):
+            id = f'{viewer}-{era}-{i}'
+            metadata[id] = movie(id, f'Film {id}') | {'year': year}
+            rows.append({'id': id, 'year': year})
+        return {'titles': rows}
     fetch = Mock(side_effect=get)
     details = Mock(side_effect=lambda i: metadata[i])
     cache = {}
     result = retrieve_candidates(fetch, lambda t: searches[t], details, lambda m: m,
                                  [['Seed A'], ['Seed B']], {}, [], cache)
     requested = [c.args[0] for c in details.call_args_list]
-    assert '0' in requested and '20' in requested and '40' in requested
-    assert len(result) == 18 and details.call_count <= 26
+    assert '0-0-0' in requested and '1-0-0' in requested and '2-0-0' in requested
+    assert {m['year'] for m in result} == {1998, 2010, 2020}
+    assert len(result) == 18 and details.call_count <= 32
     count = details.call_count
     retrieve_candidates(fetch, lambda t: searches[t], details, lambda m: m,
                         [['Seed A'], ['Seed B']], {}, [], cache)
-    assert details.call_count == count and fetch.call_count == 3
+    assert details.call_count == count and fetch.call_count == 9
+
+
+def test_explanations_must_name_a_favourite_from_the_correct_viewer():
+    data = json.loads(selection())
+    favourites = [['Arrival', 'Knives Out'], ['Paddington 2', 'Get Out']]
+    with pytest.raises(RecommendationError):
+        validate_selection(json.dumps(data), [], [], favourites)
+    for p in data['picks'].values():
+        p['for_one'] = 'Like Arrival, its puzzle builds on an emotional reveal.'
+        p['for_two'] = 'Like Get Out, the humour leaves an uneasy feeling.'
+    assert validate_selection(json.dumps(data), [], [], favourites)
+    data['picks']['safe']['for_one'] = 'Like Paddington 2, it has warmth.'
+    with pytest.raises(RecommendationError):
+        validate_selection(json.dumps(data), [], [], favourites)
+
+
+def test_short_favourite_titles_do_not_match_inside_other_words():
+    from pair_recommendations import mentions_favourite
+    assert not mentions_favourite('An uplifting comedy.', ['Up'])
+    assert mentions_favourite('Like Up, the journey grows from loss.', ['Up'])
+    assert mentions_favourite('Like Amelie, it uses offbeat humour.', ['Amélie'])
+
+
+def test_catalogue_does_not_treat_recent_rows_as_older_period_matches():
+    search = lambda title: None
+    recent = movie('1', 'Recent') | {'year': 2025}
+    details = Mock(return_value=recent)
+    def get(endpoint, params):
+        # Simulate a provider ignoring the requested release-date range.
+        return {'titles': [{'id': '1', 'year': 2025}]}
+    result = retrieve_candidates(get, search, details, lambda m: m, [[], []], {}, [], {})
+    assert len(result) == 1  # Only the recent lane may admit this movie.
+    assert details.call_count == 1

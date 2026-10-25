@@ -17,6 +17,9 @@ No new Python packages are needed for this update.
 
 Those instructions match the user's existing nested Windows folder and parent .venv setup. If your folders are different, ask for the matching command.
 
+LATEST MATCHING UPDATE
+The search now samples older, middle-period and recent films separately. Explanations must name a favourite from the correct viewer. Use the same update steps above; there are no new dependencies.
+
 WHAT TO CHECK
 - Open Tonight's preferences (optional).
 - Leave services blank and choose Adults / Any length for the first run.

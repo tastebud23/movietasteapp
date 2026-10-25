@@ -30,8 +30,8 @@ def response_json(text):
         return text
     return json.dumps({"summary": "A shared taste for clever stories.", "align": ["Characters under pressure"],
                        "differ": ["Different pacing preferences"], "best_slot": "safe",
-                       "picks": {slot: {"candidate_id": "", "title": title, "for_one": "Connects to your mysteries.",
-                                        "for_two": "Has the warmth you like.", "tradeoff": "May be darker than tonight’s mood."}
+                       "picks": {slot: {"candidate_id": "", "title": title, "for_one": "Like Arrival, it rewards following a puzzle.",
+                                        "for_two": "Like Paddington 2, it builds warmth through unlikely friendships.", "tradeoff": "May be darker than tonight’s mood."}
                                  for slot, title in zip(("safe", "compromise", "wildcard"), titles)}})
 
 
