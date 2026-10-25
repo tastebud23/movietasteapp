@@ -1,2 +1,7 @@
 streamlit
 openai
+supabase>=2,<3
+requests>=2.31,<3
+httpx>=0.27,<1
+plotly>=5,<7
+pandas>=2,<4

@@ -1,0 +1,41 @@
+START HERE — MOVIE TASTE TEST COPY
+
+This is a separate copy of the updated app. Keep your existing app folder as it is.
+
+1. Extract this ZIP file. Do not run it from inside the ZIP.
+2. Open Visual Studio Code.
+3. Choose File > Open Folder, then choose the extracted folder containing app_ui.py.
+4. Choose Terminal > New Terminal.
+
+You need Python 3.12 installed. Ask ChatGPT for Windows or Mac instructions if you are unsure.
+
+WINDOWS — run these lines one at a time in the VS Code terminal:
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.venv\Scripts\python.exe -m streamlit run app_ui.py
+
+MAC — run these lines one at a time in the VS Code terminal:
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-lock.txt
+.venv/bin/python -m streamlit run app_ui.py
+
+The first installation can take a few minutes. After starting the app, Streamlit normally opens your browser. Leave the terminal running while you use it. Press Control+C in that terminal to stop the app.
+
+WHAT TO TRY FIRST
+- Click See an example. It works without any API keys.
+- Read the main pick and the two alternatives.
+- Open Where are you watching? and try your country and services.
+- Open Create or update profile, enter a name and favourite films, then save.
+- Save a second profile. You can now choose Use saved profiles.
+- Reduce your browser window to see the phone-style layout.
+
+IMPORTANT
+- The example is a sample, not a live personalised recommendation.
+- Real recommendations need your OpenAI credential configured separately.
+- The country/service controls filter real availability labels when Watchmode is connected; the example does not include live streaming availability.
+- Guest profiles are temporary and can disappear when you close or refresh the app.
+- This test copy does not read or change your existing online Supabase tables. Account storage only connects if you deliberately configure it.
+- Never paste API keys into chat. Do not copy old secret files into this test folder until configuration is discussed.
+- These changes were validated on Python 3.12 in the cloud. Local Windows/Mac installation has not been verified on your computer yet.
+
+If a command fails, stop there and share the error message, with any credentials removed. There is no need to work out the error yourself.
