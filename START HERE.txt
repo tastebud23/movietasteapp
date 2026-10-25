@@ -24,7 +24,7 @@ The first installation can take a few minutes. After starting the app, Streamlit
 WHAT TO TRY FIRST
 - Click See an example. It works without any API keys.
 - Read the main pick and the two alternatives.
-- Open Where are you watching? and try your country and services.
+- Open Tonight’s preferences (optional) and try your country and services.
 - Open Create or update profile, enter a name and favourite films, then save.
 - Save a second profile. You can now choose Use saved profiles.
 - Reduce your browser window to see the phone-style layout.
@@ -32,10 +32,10 @@ WHAT TO TRY FIRST
 IMPORTANT
 - The example is a sample, not a live personalised recommendation.
 - Real recommendations need your OpenAI credential configured separately.
-- The country/service controls filter real availability labels when Watchmode is connected; the example does not include live streaming availability.
+- For shared picks, choosing services, family mode or a runtime limit requires Watchmode and restricts the actual candidates; the example does not include live streaming availability.
 - Guest profiles are temporary and can disappear when you close or refresh the app.
 - This test copy does not read or change your existing online Supabase tables. Account storage only connects if you deliberately configure it.
 - Never paste API keys into chat. Do not copy old secret files into this test folder until configuration is discussed.
-- These changes were validated on Python 3.12 in the cloud. Local Windows/Mac installation has not been verified on your computer yet.
+- These changes were validated on Python 3.12 in the cloud. The earlier version was also tested by the user on Windows. The new shared-picker route still needs testing with your existing keys.
 
 If a command fails, stop there and share the error message, with any credentials removed. There is no need to work out the error yourself.

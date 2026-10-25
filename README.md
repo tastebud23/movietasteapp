@@ -53,10 +53,14 @@ The SQL is rerunnable for the new schema; it does not upgrade incompatible exist
 
 - Manual entry is the default. Saved-profile selection appears after two profiles exist.
 - One shared pick appears first, followed by alternatives without repeating the top pick.
-- Editing either viewer clears stale results; rerolls exclude previous titles.
-- Pair results require three distinct recommendation slots and a best pick. Excluded favourites/seen/rejected films trigger one retry; persistently invalid results are withheld.
+- Editing either viewer or viewing preferences clears stale results. Every successful shared pick is remembered for the full browser session, even across input changes. Use **Start a fresh movie session** to clear that history.
+- Shared picks use structured JSON output with three distinct slots and a best pick drawn from those slots. Invalid responses, blocked titles and invented candidate IDs trigger one retry; persistently invalid results are withheld. Each pick explains its connection to each viewer and a possible drawback.
 - Watchlist saving needs no extra AI request.
-- Availability labels match country/services; rentals and purchases are opt-in. These settings filter displayed availability, not the recommendation pool. Missing metadata never establishes availability.
+- With Watchmode connected, shared picks are selected only from catalogue entries retrieved for both viewers and a broader discovery lane. Genre-based ranking balances both viewers and diversifies the shortlist; this is a heuristic, not a measured enjoyment score.
+- Selected streaming services constrain shared recommendations to matching country/service metadata. Optional runtime and family restrictions also filter candidates before AI selection; unknown metadata fails these checks. Family mode uses US G/PG ratings as a guide, not a guarantee of suitability for an individual child. Rentals/purchases remain opt-in. Solo availability controls still affect labels only.
+- Without Watchmode, unrestricted shared picks can use explicitly labelled AI-only suggestions. Family/runtime/service restrictions require the catalogue. Catalogue failures or too few matches do not silently relax limits or fall back to unverified suggestions.
+- Catalogue retrieval interleaves discovery lanes, enriches at most 24 candidate entries (plus up to six seeds), and caches successful session lookups for 15 minutes. It stops starting more lookups after a 75-second search budget; a request already in progress can take longer to finish. Later rounds advance discovery pages. Availability can change; a limited search is not exhaustive proof that no matching film exists.
+- Recommendation rules, catalogue retrieval and structured results rendering live in `pair_recommendations.py`, `pair_catalogue.py` and `pair_ui.py`. The legacy solo flow remains in `app_ui.py`.
 - API errors omit sensitive request details. OpenAI calls have timeouts, bounded output and a per-session throttle. This is not a deployment-wide spending limit: add provider budgets and a shared rate limiter before unrestricted public use.
 
 ## Validation
@@ -77,6 +81,8 @@ node tests/browser_smoke.cjs
 ```
 
 Override `CHROMIUM_PATH`, `MOVIETASTE_BASE_URL` or `MOVIETASTE_SCREENSHOTS` as needed. Screenshots go outside the checkout by default.
+
+Use [docs/recommendation-checks.md](docs/recommendation-checks.md) to compare real recommendation quality. Automated checks validate rules and integration mechanics, not whether people will enjoy a film.
 
 ## Before a public beta
 

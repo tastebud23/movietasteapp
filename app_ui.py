@@ -4,6 +4,9 @@ import os
 import time
 from accounts import storage_for_session
 from availability import COUNTRIES, PROVIDERS, provider_labels
+from pair_catalogue import retrieve_candidates
+from pair_ui import render_selection
+from pair_recommendations import RecommendationError, select_pair, title_key, to_display_text
 import html
 import json
 import re
@@ -36,7 +39,7 @@ OPENAI_MODEL = get_secret_value("OPENAI_MODEL", "gpt-4o-mini")
 client = OpenAI(api_key=OPENAI_API_KEY, timeout=30.0, max_retries=1) if OPENAI_API_KEY else None
 supabase = storage_for_session(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
 
-def call_openai_text(prompt: str, fallback: str = "") -> str:
+def call_openai_text(prompt: str, fallback: str = "", schema=None) -> str:
     """
     Safely calls the OpenAI API and returns text.
     Prevents ugly Streamlit tracebacks if quota/billing/rate limits/API errors happen.
@@ -51,7 +54,11 @@ def call_openai_text(prompt: str, fallback: str = "") -> str:
         return fallback
     st.session_state.ai_call_times = calls + [now]
     try:
+        options = {}
+        if schema:
+            options["text"] = {"format": {"type": "json_schema", "name": "shared_movie_selection", "strict": True, "schema": schema}}
         response = client.responses.create(
+            **options,
             model=OPENAI_MODEL,
             input=prompt,
             max_output_tokens=2400,
@@ -601,7 +608,7 @@ def normalize_watchmode_title(item: dict):
         genre_names = [g.strip() for g in genre_names.split(",") if g.strip()]
     genre_names = [str(g).strip() for g in genre_names if str(g).strip()]
 
-    genre_ids = item.get("genre_ids") or []
+    genre_ids = item.get("genre_ids") or [g for g in item.get("genres", []) if isinstance(g, int)]
     if isinstance(genre_ids, str):
         genre_ids = [safe_int(x.strip()) for x in genre_ids.split(",") if x.strip()]
     genre_ids = [g for g in genre_ids if g is not None]
@@ -622,6 +629,7 @@ def normalize_watchmode_title(item: dict):
         "user_rating": safe_float(item.get("user_rating"), 0.0),
         "critic_score": safe_float(item.get("critic_score"), 0.0),
         "runtime_minutes": safe_int(item.get("runtime_minutes"), None),
+        "us_rating": item.get("us_rating"),
         "sources": item.get("sources") or [],
         "streaming_sources": item.get("streaming_sources") or item.get("sources") or [],
     }
@@ -680,6 +688,9 @@ def resolve_pair_movie_metadata(title):
     if st.session_state.get("example_result", False) or not title_key or not watchmode_enabled():
         return {}
 
+    verified = st.session_state.get("current_pair_metadata", {}).get(title_key(clean_title))
+    if verified:
+        return verified
     cache = st.session_state.setdefault("pair_metadata_cache", {})
     if title_key in cache:
         return cache.get(title_key) or {}
@@ -1804,7 +1815,7 @@ def get_streaming_provider_names(metadata: dict, limit: int = 4) -> list[str]:
         st.session_state.get("watch_rentals", False),
     )[:limit]
 
-def render_recommendation_card(label, title, reason, metadata=None, primary=False, profile_name="", slot_id="", show_feedback=False):
+def render_recommendation_card(label, title, reason, metadata=None, primary=False, profile_name="", slot_id="", show_feedback=False, viewer_reasons=None, tradeoff=None):
     metadata = metadata or {}
     clean_title = clean_recommended_title(title)
     poster_url = metadata.get("poster_url") or metadata.get("image_url") or ""
@@ -1838,6 +1849,12 @@ def render_recommendation_card(label, title, reason, metadata=None, primary=Fals
                 st.caption(" | ".join(details))
             if reason:
                 st.write(reason)
+            for viewer, explanation in viewer_reasons or []:
+                st.caption(f"WHY IT FITS {viewer.upper()}")
+                st.write(explanation)
+            if tradeoff:
+                st.caption("POSSIBLE DRAWBACK")
+                st.write(tradeoff)
             if providers:
                 st.caption("Available in " + st.session_state.get("watch_country", "New Zealand") + ": " + ", ".join(providers))
                 st.caption("Availability can change. Confirm with your provider before watching.")
@@ -1979,8 +1996,19 @@ def render_solo_results(output: str, profiles: dict | None = None):
     st.markdown("💡 **Tip:** The more honest your movie list is, the better your shared picks will get later.")
 
 def render_pair_results(output: str):
+    selection = st.session_state.get("pair_selection")
+    if selection and not st.session_state.get("example_result", False):
+        render_selection(selection, [st.session_state.pair_name_1 or "You", st.session_state.pair_name_2 or "Friend"],
+                         st.session_state.get("current_pair_metadata", {}), render_recommendation_card,
+                         list(load_profiles()), update_profile_feedback, st.session_state.get("pair_result_mode"))
+        return
     if st.session_state.get("example_result", False):
         st.info("Example result · this is a sample, not a recommendation based on your films. Streaming availability has not been checked.")
+    if not st.session_state.get("example_result", False):
+        if st.session_state.get("pair_result_mode") == "catalogue":
+            st.caption("Selected from checked movie catalogue entries. Streaming availability can change.")
+        else:
+            st.info("AI-only suggestions: movie details, age suitability and streaming availability have not been verified.")
     pair_metadata_debug = []
     backup_labels = {
         "Safe": "Easy win",
@@ -2299,63 +2327,61 @@ Avoid repeating the same recommendation logic from the previous attempt.
     return output
 
 def get_pair_response(user_one_name: str, movies_one: list[str], user_two_name: str, movies_two: list[str], reroll_count: int, excluded_titles=None, extra_retry_instruction: str = "") -> str:
-    excluded_titles = dedupe_titles((excluded_titles or []) + movies_one + movies_two)
-    if reroll_count:
-        excluded_titles += parse_pair_recommendations(st.session_state.get("pair_output", "")).get("recommended_titles", [])
-    exclusion_instruction = ""
-    if excluded_titles:
-        exclusion_instruction = f"""
-Hard exclusions:
-Do not recommend any of these films because one of the viewers has already seen or rejected them:
-{", ".join(excluded_titles)}
-"""
-
-    prompt = f"""
-Person 1 ({user_one_name}) likes these movies: {movies_one}
-Person 2 ({user_two_name}) likes these movies: {movies_two}
-
-Act like a sharp, blunt, and deeply intuitive film curator helping two people decide what to watch tonight.
-You are the ultimate tie-breaker.
-
-CRITICAL TONE RULES:
-- DO NOT sound like an AI, a therapist, or a PR agency.
-- Write with punchy, visceral, conversational phrasing.
-- BANNED WORDS: gravitates, interplay, tapestry, seamlessly, masterclass, delves, explores, nuanced, multidimensional, captivating, journey, realm. (If you use these, you fail).
-
-{exclusion_instruction}
-
-{extra_retry_instruction}
-
-Structure exactly like this:
-
-Shared Taste Profile:
-(2-3 punchy sentences on the visceral payoff that bridges both their tastes. NO corporate speak.)
-
-Where You Align:
-- 3 specific, sharp points
-
-Where You Differ:
-- 2 key tensions or breaking points
-
-Recommendations:
-Safe: [movie title] - [1 short punchy sentence]
-Compromise: [movie title] - [1 short punchy sentence]
-Wildcard: [movie title] - [1 short punchy sentence]
-
-Best Pick Right Now:
-[movie title] - [1 short punchy sentence]
-"""
-    output = call_openai_text(prompt)
-    if not output:
+    if client is None:
+        st.info("Connect your OpenAI key to get personalised picks, or use See an example.")
         return ""
-    result = validate_pair_recommendations(output, excluded_titles)
-    if not result["validation_passed"]:
-        output = call_openai_text(prompt + "\nReplace any excluded films and include all three recommendation slots and Best Pick Right Now. Return the required structure.")
-        result = validate_pair_recommendations(output, excluded_titles)
-    if not result["validation_passed"]:
-        st.warning("We couldn’t find a complete set of fresh picks. Please try again.")
+    preferences = {
+        "region": COUNTRIES[st.session_state.get("watch_country", "New Zealand")],
+        "subscriptions": st.session_state.get("watch_subscriptions", []),
+        "rentals": st.session_state.get("watch_rentals", False),
+        "family": st.session_state.get("pair_audience", "Adults") == "Family night",
+        "mood": st.session_state.get("pair_mood", "Anything"),
+        "max_runtime": {"Any length": 0, "Up to 90 minutes": 90, "Up to 120 minutes": 120, "Up to 150 minutes": 150}[st.session_state.get("pair_length", "Any length")],
+    }
+    preferences["streaming_only"] = bool(preferences["subscriptions"])
+    restricted = preferences["streaming_only"] or preferences["family"] or preferences["max_runtime"]
+    if restricted and not watchmode_enabled():
+        st.warning("These viewing limits need movie catalogue information. Connect Watchmode, or clear the services, family and length limits to browse AI-only suggestions.")
         return ""
-    return output
+    history = st.session_state.get("pair_suggested_titles", [])
+    preferences["discovery_page"] = 1 + len(history) // 9
+    excluded = dedupe_titles((excluded_titles or []) + movies_one + movies_two + history)
+    candidates = []
+    if watchmode_enabled():
+        try:
+            # Use fresh session-cached details, not the legacy 30-day database cache.
+            candidates = retrieve_candidates(
+                watchmode_get, watchmode_search_movie,
+                lambda movie_id: watchmode_get(f"/title/{movie_id}/details/", {"append_to_response": "sources"}),
+                normalize_watchmode_title, [movies_one, movies_two], preferences, excluded,
+                st.session_state.setdefault("pair_catalogue_cache", {}),
+            )
+        except Exception:
+            st.warning("We couldn’t check the movie catalogue. Please try again shortly. Your viewing limits have not been relaxed.")
+            return ""
+        if len(candidates) < 3:
+            st.info("Not enough fresh films were confirmed in this search. Try fewer viewing limits, different favourites, or start a fresh movie session. We haven’t relaxed your limits.")
+            return ""
+    profiles_local = load_profiles()
+    memories = []
+    for name in (user_one_name, user_two_name):
+        profile = profiles_local.get(name, {}) if st.session_state.get("pair_mode_type") == "Use saved profiles" else {}
+        memories.append({k: profile.get(k, []) if k.endswith("movies") else profile.get(k, "") for k in ("taste_summary", "latest_taste_read", "saved_movies", "rejected_movies", "seen_movies")})
+    try:
+        selection = select_pair(call_openai_text, candidates,
+                                [user_one_name or "You", user_two_name or "Friend"],
+                                [movies_one, movies_two], preferences, excluded, memories)
+    except RecommendationError as error:
+        st.warning(str(error))
+        return ""
+    if selection is None:
+        return ""
+    titles = [p["title"] for p in selection["picks"].values()]
+    st.session_state.pair_suggested_titles = dedupe_titles(history + titles)
+    st.session_state.current_pair_metadata = {title_key(m["title"]): m for m in candidates}
+    st.session_state.pair_result_mode = "catalogue" if candidates else "ai_only"
+    st.session_state.pair_selection = selection
+    return to_display_text(selection, [user_one_name or "You", user_two_name or "Friend"])
 
 
 EXAMPLE_PAIR = """Shared Taste Profile:
@@ -2378,7 +2404,7 @@ Knives Out - A playful mystery that gives both viewers something to enjoy.
 st.caption("MOVIE TASTE · A BETTER MOVIE NIGHT")
 st.title("Two tastes. One movie.")
 st.markdown("Less scrolling. More watching. Find a film you’ll both look forward to.")
-st.caption("Add a few films you each love. Get one shared pick, with two ways to change the mood.")
+
 col_nav_1, col_nav_2 = st.columns([3, 2])
 with col_nav_1: st.button("🍿 Watch with someone", use_container_width=True, on_click=set_mode_with_someone)
 with col_nav_2: st.button("🧠 Build your taste profile", use_container_width=True, on_click=set_mode_solo)
@@ -2386,11 +2412,19 @@ st.markdown("---")
 
 profiles = load_profiles()
 profile_names = list(profiles.keys())
-with st.expander("Where are you watching?", expanded=False):
-    st.selectbox("Country", list(COUNTRIES), key="watch_country")
-    st.multiselect("Your streaming services (optional)", PROVIDERS, key="watch_subscriptions")
-    st.checkbox("Include rentals and purchases", key="watch_rentals")
-    st.caption("These settings filter the availability shown on movie cards. They do not guarantee that every recommended film is on your subscriptions.")
+with st.expander("Tonight’s preferences (optional)", expanded=False):
+    st.selectbox("Country", list(COUNTRIES), key="watch_country", on_change=reset_pair_results)
+    st.multiselect("Your streaming services (leave blank to browse freely)", PROVIDERS, key="watch_subscriptions", on_change=reset_pair_results)
+    st.checkbox("Include rentals and purchases", key="watch_rentals", on_change=reset_pair_results)
+    st.caption("For shared picks, selecting services limits the choices to films with matching availability in your country. Solo taste analysis still filters availability labels only.")
+    st.selectbox("Who is watching?", ["Adults", "Family night"], key="pair_audience", on_change=reset_pair_results)
+    st.selectbox("Tonight’s mood", ["Anything", "Light and funny", "Mystery or suspense", "An adventure", "Something thoughtful"], key="pair_mood", on_change=reset_pair_results)
+    st.selectbox("How much time do you have?", ["Any length", "Up to 90 minutes", "Up to 120 minutes", "Up to 150 minutes"], key="pair_length", on_change=reset_pair_results)
+    st.caption("Family night uses confirmed US G/PG ratings as a guide; check your local age guidance. Mood influences ranking; length, family and service limits are checked before selection.")
+    if st.button("Start a fresh movie session", key="reset_pair_history"):
+        st.session_state.pair_suggested_titles = []
+        reset_pair_results()
+        st.rerun()
 
 if st.session_state.app_mode == "solo":
     st.markdown("## 🧠 Build your taste profile")
@@ -2559,10 +2593,10 @@ else:
         col1, col2 = st.columns(2)
         with col1:
             st.text_input("Your name (optional)", key="pair_name_1", max_chars=60, on_change=reset_pair_results)
-            st.text_area("Your favourite films", height=160, key="pair_movies_1", placeholder="Arrival\nKnives Out\nThe Martian", max_chars=1200, on_change=reset_pair_results)
+            st.text_area("Your favourite films", height=130, key="pair_movies_1", placeholder="Arrival\nKnives Out\nThe Martian", max_chars=1200, on_change=reset_pair_results)
         with col2:
             st.text_input("Their name (optional)", key="pair_name_2", max_chars=60, on_change=reset_pair_results)
-            st.text_area("Their favourite films", height=160, key="pair_movies_2", placeholder="Paddington 2\nLittle Miss Sunshine\nAmélie", max_chars=1200, on_change=reset_pair_results)
+            st.text_area("Their favourite films", height=130, key="pair_movies_2", placeholder="Paddington 2\nLittle Miss Sunshine\nAmélie", max_chars=1200, on_change=reset_pair_results)
         st.markdown("---")
 
         c_a, c_b = st.columns([1, 1])

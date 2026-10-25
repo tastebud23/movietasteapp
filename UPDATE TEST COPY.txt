@@ -1,0 +1,34 @@
+UPDATING THE TEST COPY YOU ALREADY HAVE
+
+No new Python packages are needed for this update.
+
+1. Download the latest ZIP from the codex/movie-taste-test branch on GitHub.
+2. Extract it into a NEW folder, separate from the test copy you currently run.
+3. In the running app's VS Code terminal, press Control+C to stop the app.
+4. From the NEW extracted folder, copy these files into your EXISTING app folder (the one containing app_ui.py):
+   app_ui.py                 Replace the old copy when Windows asks.
+   pair_recommendations.py   New file.
+   pair_catalogue.py         New file.
+   pair_ui.py                New file.
+   .gitignore                Replace the old copy to ignore local credentials.
+5. Keep your existing .streamlit folder, secrets.toml and .venv environment. Do not overwrite or delete them.
+6. Restart with the SAME command that worked previously:
+   ..\.venv\Scripts\python.exe -m streamlit run app_ui.py
+
+Those instructions match the user's existing nested Windows folder and parent .venv setup. If your folders are different, ask for the matching command.
+
+WHAT TO CHECK
+- Open Tonight's preferences (optional).
+- Leave services blank and choose Adults / Any length for the first run.
+- Enter both people's favourites, then choose Find our movie.
+- When Watchmode is configured, the app chooses from checked catalogue entries. Otherwise it clearly labels AI-only suggestions.
+- Each pick now has an explanation for each viewer and a possible drawback.
+- Open Two alternatives to see the other options.
+- Try several rounds. Earlier titles should not return during this session.
+- Select your services and a time limit; all suggested films must meet those checked metadata restrictions.
+- Family night admits only confirmed US G/PG entries as a guide. Check local age guidance too.
+- Start a fresh movie session clears suggested-film history; it does not delete saved profiles.
+
+A narrow search may find fewer than three eligible films. The app explains this instead of ignoring limits. Removing a limit is your choice.
+
+Do not share secrets.toml, paste keys into chat or upload that file to GitHub.
