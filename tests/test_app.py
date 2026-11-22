@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 import json
 from streamlit.testing.v1 import AppTest
+from feedback import derive_profile_feedback
 
 APP = str(Path(__file__).resolve().parents[1] / "app_ui.py")
 PAIR = """Shared Taste Profile:
@@ -44,10 +45,18 @@ def no_live_services(monkeypatch):
 def app():
     at = AppTest.from_file(APP).run()
     assert not at.exception, [e.message for e in at.exception]
+    assert at.session_state["app_mode"] == "solo"
+    assert at.title[0].value == "Find your next good film."
+    assert at.text_area(key="solo_movies_input")
+    assert at.button(key="solo_find")
+    at.button(key="nav_pair").click().run()
+    assert not at.exception, [e.message for e in at.exception]
     return at
 
 
 def save_profile(at, name, movies):
+    if at.session_state["editor_selected_profile"] != name:
+        at.selectbox(key="editor_selected_profile").set_value("").run()
     at.text_input(key="editor_profile_name").set_value(name)
     at.text_area(key="editor_profile_movies").set_value(movies)
     at.button(key="save_profile_button").click().run()
@@ -148,8 +157,14 @@ def test_reroll_excludes_previous_titles_and_watchlist_save(monkeypatch):
         at.button(key="pair_match_manual").click().run()
         at.button(key="save_pair_pick").click().run()
         assert not at.exception
-        feedback = at.session_state["guest_tables"]["movie_feedback"]
-        assert any(r["movie_title"] == "Knives Out" and r["profile_name"] == "Alex" and r["status"] == "saved" for r in feedback)
+        tables = at.session_state["guest_tables"]
+        feedback = derive_profile_feedback(
+            [r for r in tables["movie_feedback"] if r.get("profile_name") == "Alex"],
+            [e for e in tables["recommendation_events"] if e.get("profile_name") == "Alex"],
+        )
+        assert "Knives Out" in feedback["saved_movies"]
+        assert "Knives Out" not in feedback["favorites"]
+        assert "Knives Out" not in feedback["seen_movies"]
         at.button(key="pair_reroll_manual").click().run()
         assert not at.exception
         assert "Hot Fuzz" in at.session_state["pair_output"]
@@ -216,37 +231,49 @@ def test_entire_session_history_survives_input_changes_and_rejects_older_set(mon
         assert at.session_state['pair_suggested_titles'] == []
 
 
-def test_restrictions_without_catalogue_never_make_unverified_ai_request(monkeypatch):
-    monkeypatch.setenv('MOVIETASTE_API_KEY', 'test-only-not-a-credential')
-    with patch('openai.OpenAI') as factory:
-        at = app()
-        at.text_area(key='pair_movies_1').set_value('Arrival')
-        at.text_area(key='pair_movies_2').set_value('Paddington 2')
-        at.multiselect(key='watch_subscriptions').set_value(['Netflix']).run()
-        at.button(key='pair_match_manual').click().run()
-        assert not at.exception
-        assert any('Connect Watchmode' in w.value for w in at.warning)
-        factory.return_value.responses.create.assert_not_called()
-
-
-def test_verified_selection_and_preference_change_invalidation(monkeypatch):
-    import pair_catalogue
+def test_watchmode_configuration_does_not_enable_catalogue_or_network_requests(monkeypatch):
     monkeypatch.setenv('MOVIETASTE_API_KEY', 'test-only-not-a-credential')
     monkeypatch.setenv('WATCHMODE_API_KEY', 'test-only-not-a-credential')
-    candidates = [dict(id=str(i), title=t, year=2016, runtime_minutes=95, genre_names=['Comedy'], us_rating='PG',
-                       sources=[{'name': 'Netflix', 'region': 'NZ', 'type': 'sub'}])
-                  for i, t in enumerate(['Knives Out', 'The Grand Budapest Hotel', 'Hunt for the Wilderpeople'], 1)]
-    data = json.loads(response_json(PAIR))
-    for i, pick in enumerate(data['picks'].values(), 1):
-        pick['candidate_id'] = str(i)
-    with patch('openai.OpenAI') as factory, patch.object(pair_catalogue, 'retrieve_candidates', return_value=candidates):
-        factory.return_value.responses.create.return_value = SimpleNamespace(output_text=json.dumps(data))
+    with patch('openai.OpenAI') as factory, \
+            patch('pair_catalogue.retrieve_candidates') as catalogue, \
+            patch('requests.sessions.Session.request', side_effect=AssertionError('Unexpected network request')) as requests_send, \
+            patch('httpx.Client.send', side_effect=AssertionError('Unexpected network request')) as httpx_send:
+        factory.return_value.responses.create.return_value = SimpleNamespace(output_text=response_json(PAIR))
         at = app()
         at.text_area(key='pair_movies_1').set_value('Arrival')
         at.text_area(key='pair_movies_2').set_value('Paddington 2')
         at.button(key='pair_match_manual').click().run()
         assert not at.exception
-        assert at.session_state['pair_result_mode'] == 'catalogue'
+        assert 'Knives Out' in at.session_state['pair_output']
+        assert at.session_state['pair_result_mode'] == 'ai_only'
+        assert factory.return_value.responses.create.call_count == 1
+        catalogue.assert_not_called()
+        requests_send.assert_not_called()
+        httpx_send.assert_not_called()
+
+
+def test_tonight_context_reaches_prompt_and_change_invalidates_results(monkeypatch):
+    monkeypatch.setenv('MOVIETASTE_API_KEY', 'test-only-not-a-credential')
+    next_pair = PAIR.replace('Knives Out', 'Hot Fuzz').replace('The Grand Budapest Hotel', 'Game Night').replace('Hunt for the Wilderpeople', 'The Nice Guys')
+    with patch('openai.OpenAI') as factory:
+        factory.return_value.responses.create.side_effect = [
+            SimpleNamespace(output_text=response_json(PAIR)), SimpleNamespace(output_text=response_json(next_pair))]
+        at = app()
+        at.text_area(key='pair_movies_1').set_value('Arrival')
+        at.text_area(key='pair_movies_2').set_value('Paddington 2')
+        at.text_input(key='tonight_notes').set_value('Clever and funny, nothing bleak')
+        at.button(key='pair_match_manual').click().run()
+        assert not at.exception
+        first_prompt = factory.return_value.responses.create.call_args.kwargs['input']
+        assert json.loads(first_prompt.split('Input data:\n', 1)[1])['tonight']['mood'] == 'Clever and funny, nothing bleak'
         assert any('WHY IT FITS' in c.value for c in at.caption)
-        at.selectbox(key='pair_length').set_value('Up to 90 minutes').run()
+        at.text_input(key='tonight_notes').set_value('Something tense tonight').run()
         assert at.session_state['pair_output'] == ''
+        assert at.button(key='pair_reroll_manual').disabled
+        assert factory.return_value.responses.create.call_count == 1
+        assert len(at.session_state['pair_suggested_titles']) == 3
+        at.button(key='pair_match_manual').click().run()
+        assert not at.exception
+        assert 'Hot Fuzz' in at.session_state['pair_output']
+        second_prompt = factory.return_value.responses.create.call_args.kwargs['input']
+        assert json.loads(second_prompt.split('Input data:\n', 1)[1])['tonight']['mood'] == 'Something tense tonight'
