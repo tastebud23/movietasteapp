@@ -3,6 +3,7 @@
 The new tables intentionally do not reuse the legacy, globally named profiles.
 Database row-level policies remain the authority for authenticated access.
 """
+from collections.abc import Mapping
 from copy import deepcopy
 from types import SimpleNamespace
 from uuid import uuid4
@@ -15,6 +16,65 @@ KEYS = {
     "profiles": "profile_name", "movie_feedback": "profile_name,movie_title",
     "recommendation_events": "event_id", "movie_cache": "watchmode_id",
 }
+READ_ORDERS = {
+    "profiles": ("profile_name",),
+    "movie_feedback": ("profile_name", "movie_title"),
+    "recommendation_events": ("created_at", "event_id"),
+    "movie_cache": ("watchmode_id",),
+}
+
+
+def read_all(store, table_name, *, filters=None, orders=None, page_size=500):
+    """Read every matching row through inclusive, deterministically ordered pages.
+
+    ``filters`` is a mapping of equality filters. ``orders`` can be one column
+    name or a sequence of names / ``(column, descending)`` pairs. Missing table
+    key columns are appended as tie-breakers. Each page goes through the store,
+    retaining AccountStore's ownership filter.
+
+    Advance by the actual result size and stop only at an empty page. This also
+    handles a server row cap lower than the requested page size. This is an
+    ordered read, not a transactional snapshot of concurrent edits.
+    """
+    if table_name not in READ_ORDERS:
+        raise ValueError("Unknown table")
+    if type(page_size) is not int or page_size < 1:
+        raise ValueError("Page size must be a positive integer.")
+    if filters is None:
+        filters = {}
+    if not isinstance(filters, Mapping) or any(not isinstance(k, str) or not k for k in filters):
+        raise ValueError("Filters must map column names to equality values.")
+    requested = [orders] if isinstance(orders, str) else orders
+    ordering = []
+    for item in requested or ():
+        if isinstance(item, str):
+            column, descending = item, False
+        elif isinstance(item, (tuple, list)) and len(item) == 2:
+            column, descending = item
+        else:
+            raise ValueError("Order entries must be column names or (column, descending) pairs.")
+        if not isinstance(column, str) or not column or type(descending) is not bool:
+            raise ValueError("Order columns must be non-empty text and descending must be boolean.")
+        if column not in [name for name, _ in ordering]:
+            ordering.append((column, descending))
+    for column in READ_ORDERS[table_name]:
+        if column not in [name for name, _ in ordering]:
+            ordering.append((column, False))
+
+    rows, start = [], 0
+    while True:
+        query = store.table(table_name).select("*")
+        for key, value in filters.items():
+            query = query.eq(key, value)
+        for column, descending in ordering:
+            query = query.order(column, desc=descending)
+        page = query.range(start, start + page_size - 1).execute().data
+        if not isinstance(page, list):
+            raise ValueError("Database read did not return a row list.")
+        if not page:
+            return rows
+        rows.extend(page)
+        start += len(page)
 
 
 class GuestStore:
@@ -33,7 +93,8 @@ class GuestQuery:
     def __init__(self, rows, name):
         self.rows, self.name = rows, name
         self.filters = []
-        self.action, self.payload, self.sort = "select", None, None
+        self.action, self.payload = "select", None
+        self.orders, self.window = [], None
         self.conflict = KEYS[name]
 
     def select(self, columns="*"):
@@ -44,7 +105,13 @@ class GuestQuery:
         return self
 
     def order(self, key, desc=False):
-        self.sort = (key, desc)
+        self.orders.append((key, desc))
+        return self
+
+    def range(self, start, end):
+        if type(start) is not int or type(end) is not int or not 0 <= start <= end:
+            raise ValueError("Range must contain non-negative inclusive bounds.")
+        self.window = (start, end)
         return self
 
     def upsert(self, payload, on_conflict=None):
@@ -79,9 +146,11 @@ class GuestQuery:
                 else:
                     self.rows.append(row)
                 matches.append(row)
-        if self.sort:
-            key, desc = self.sort
-            matches = sorted(matches, key=lambda r: r.get(key, ""), reverse=desc)
+        for key, desc in reversed(self.orders):
+            matches = sorted(matches, key=lambda r: (r.get(key) is None, r.get(key)), reverse=desc)
+        if self.window is not None:
+            start, end = self.window
+            matches = matches[start:end + 1]
         return SimpleNamespace(data=deepcopy(matches))
 
 
@@ -111,6 +180,10 @@ class AccountQuery:
 
     def order(self, key, desc=False):
         self.query = self.query.order(key, desc=desc)
+        return self
+
+    def range(self, start, end):
+        self.query = self.query.range(start, end)
         return self
 
     def _owned(self, payload):

@@ -21,10 +21,14 @@ const path = require('node:path');
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       await page.goto(process.env.MOVIETASTE_BASE_URL || 'http://127.0.0.1:8501/', { waitUntil: 'networkidle' });
-      await page.getByRole('heading', { name: 'Two tastes. One movie.', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Find your next good film.', exact: true }).waitFor();
+      await page.getByRole('textbox', { name: 'Movies you love', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Find me a film', exact: true }).waitFor();
+      await page.screenshot({ path: path.join(output, `${name}-landing.png`) });
+      await page.getByRole('button', { name: 'With someone', exact: true }).click();
       await page.getByRole('textbox', { name: 'Your favourite films', exact: true }).waitFor();
       await page.getByRole('textbox', { name: 'Their favourite films', exact: true }).waitFor();
-      await page.screenshot({ path: path.join(output, `${name}-landing.png`) });
+      await page.screenshot({ path: path.join(output, `${name}-pair.png`) });
       await page.getByRole('button', { name: 'See an example', exact: true }).click();
       const result = page.getByRole('heading', { name: '🎯 This is the one' });
       await result.waitFor();
@@ -39,7 +43,7 @@ const path = require('node:path');
   } finally {
     await browser.close();
   }
-  console.log(`PASS: desktop/mobile landing, example results and browser errors. Screenshots: ${output}`);
+  console.log(`PASS: desktop/mobile solo landing, pair flow, example results and browser errors. Screenshots: ${output}`);
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

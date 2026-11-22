@@ -1,101 +1,103 @@
-# Movie Taste
+# Tastebud
 
-Two tastes. One movie. A Streamlit app that helps two people choose a film, with optional taste profiles and watchlists.
+A personal movie picker that helps you choose something worth watching. **For me** opens first and gives you three worthwhile picks from your favourite films. **With someone** keeps the two-person flow, with one shared pick and two alternatives.
 
-This repository incorporates the newer uploaded source, including Watchmode metadata, Supabase integration, taste analysis and recommendation guardrails.
+The current personal build is on [`codex/tastebud-personal-core`](https://github.com/tastebud23/movietasteapp/tree/codex/tastebud-personal-core).
 
-## Run locally
+## What this build does
 
-Python 3.12 is the validated development version.
+- Uses your full favourite-film list, including long numbered lists. It removes list numbering without changing numeric titles such as `1917`.
+- Suggests three distinct films, with the strongest first. Every pick should make sense for your taste; there is no forced wildcard.
+- Explains each solo pick through a named favourite and a specific connection. Shared picks give a reason for each viewer.
+- Keeps **Tonight’s mood** separate from your saved taste. Changing it clears the old results.
+- Remembers earlier suggestions during the session. **Try three more** or **Try another pick** asks for fresh films. **Start a fresh movie session** clears session suggestion history without deleting profiles or saved feedback.
+- Supports watchlists, watched films and explicit liked/disliked feedback. Saving means interest; marking a film seen does not imply enjoyment. **Not tonight** only skips it for the current session.
+- Lets you record a film you watched outside Tastebud, then say whether you liked it. Older watched films can be found by title.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-lock.txt
-python -m streamlit run app_ui.py
+Streaming availability and catalogue lookups are deferred. An existing Watchmode key is left unused. This build has no service filters, availability claims, taste radar or separate blueprint-generation step. Film details are generated and may need checking.
+
+## Run or update your copy
+
+If the previous test copy already works, this update needs **no new dependencies or new API key**. See [UPDATE TEST COPY.txt](UPDATE%20TEST%20COPY.txt) for the Windows update steps.
+
+The recommended route is to download the current branch as a ZIP and extract it into a separate folder. Keep the working copy, its `.venv` and `.streamlit/secrets.toml`. You can copy your existing configuration into the new folder locally and use your existing Python environment.
+
+Run from the folder containing `app_ui.py`. If your existing Windows environment sits one folder above the app, the previously used command is:
+
+```powershell
+..\.venv\Scripts\python.exe -m streamlit run app_ui.py
 ```
 
-Run from the repository root to load the theme. `requirements.txt` declares app dependencies; `requirements-dev.txt` adds pytest; `requirements-lock.txt` pins the validated development environment, including transitive and test dependencies. Refresh the lock deliberately after dependency changes.
+If `.venv` sits inside the app folder, use `.venv\Scripts\python.exe` instead.
 
-No credentials are required to open the app, create session-only profiles or explore the labelled example. Personalised recommendations require an OpenAI key. Guest sessions are temporary: refreshing/disconnecting can discard profiles. Signing in or out clears the session; guest profiles are not automatically imported.
+For a fresh Windows setup with Python 3.12:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.venv\Scripts\python.exe -m streamlit run app_ui.py
+```
+
+For a fresh macOS/Linux setup:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-lock.txt
+.venv/bin/python -m streamlit run app_ui.py
+```
+
+Python 3.12 is the development version used for validation. `requirements-lock.txt` contains the existing pinned environment; dependency changes are not part of this update. [START HERE.txt](START%20HERE.txt) gives a short first-run walkthrough.
 
 ## Configuration
 
-Use environment variables or Streamlit secrets. Never commit secret values. Cloud environments can bind `MOVIETASTE_API_KEY` instead of the reserved `OPENAI_API_KEY`; the app accepts either without writing credentials to disk.
+Keep the configuration that already works. Use environment variables or a local `.streamlit/secrets.toml`; do not commit or share secret values.
 
-| Name | Purpose |
+| Setting | Purpose |
 | --- | --- |
-| `MOVIETASTE_API_KEY` or `OPENAI_API_KEY` | Required for personalised recommendations |
-| `OPENAI_MODEL` | Responses API model; defaults to `gpt-4o-mini` |
-| `WATCHMODE_API_KEY` | Optional catalogue metadata and availability |
-| `SUPABASE_URL` | HTTPS project URL for persistent accounts |
-| `SUPABASE_PUBLISHABLE_KEY` | Publishable key or legacy **anon** key for persistent accounts |
-| `ENABLE_DEBUG` | Set `true` for local development diagnostics; off by default |
+| `OPENAI_API_KEY` | Existing OpenAI key, from an environment variable or Streamlit secrets |
+| `MOVIETASTE_API_KEY` | Environment-variable alias for the OpenAI key |
+| `OPENAI_MODEL` | Existing model override; defaults to `gpt-4o-mini` |
+| `SUPABASE_URL` | Optional Supabase project URL for signed-in accounts |
+| `SUPABASE_PUBLISHABLE_KEY` | Publishable or legacy anon key for signed-in accounts |
+| `WATCHMODE_API_KEY` | May remain in your configuration; unused by this build |
 
-The legacy `SUPABASE_KEY` variable is deliberately not used. Do not supply service-role or `sb_secret_` keys for authentication. The client key check only checks format/role; Supabase verifies credentials.
+You can open the app, create temporary profiles and view the labelled pair example without an OpenAI key. Personalised picks use your existing key. Supabase is optional for trying the app. The older `SUPABASE_KEY` setting is not used for account authentication; use the publishable/anon key, not a service-role key.
 
-Network destinations: `api.openai.com`, `api.watchmode.com`, your exact Supabase project hostname and poster hosts returned by Watchmode. Installation uses PyPI. Keep TLS verification enabled.
+## Profiles and feedback
 
-## Account-backed storage
+**Guest profiles last for the browser session.** Refreshing or disconnecting can discard them. **Signed-in profiles use Supabase** and persist across sessions. Signing in or out clears the current session; guest profiles are not imported automatically.
 
-1. Run [supabase/schema.sql](supabase/schema.sql) in your Supabase SQL editor.
-2. Enable Supabase email/password authentication and configure confirmation emails/site settings for deployment.
-3. Supply `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` through deployment configuration.
-4. Open **Your movie space** in the sidebar, create an account, confirm email if required, and sign in.
+No SQL migration is required when updating an existing installation of this repository’s `movietaste_*` schema. New feedback is stored as versioned events in `movietaste_recommendation_events`. Existing `movietaste_movie_feedback` rows are retained and read as the baseline. New events distinguish a saved film, a watched film, a like, a dislike and an updated favourites list without rewriting those older rows.
 
-New `movietaste_*` tables use composite keys containing `owner_id`, row-level security and authenticated-user policies. The app also scopes reads/deletes and attaches the authenticated owner to writes. Clients and guest data belong to individual sessions; user data and authenticated clients are never globally cached.
+Older, unprefixed tables such as `profiles` and `movie_feedback` remain untouched and are not read by this app. This update does not migrate those original profiles. Older app versions will not interpret the new feedback events; use this build to view or edit feedback recorded after the update.
 
-Legacy tables remain untouched and are not read by this app. Existing profiles therefore do not appear automatically. Plan an explicit, backed-up migration after establishing ownership of old profiles. Audit legacy API grants and RLS before public release: new policies do not secure old tables.
+If setting up signed-in storage for the first time, use [supabase/schema.sql](supabase/schema.sql), enable email/password authentication in Supabase, then configure the project URL and publishable key. Existing configured accounts use **Your movie space** in the sidebar.
 
-The SQL is rerunnable for the new schema; it does not upgrade incompatible existing tables with the same names.
+## Request behaviour
 
-## Behaviour
+A valid recommendation round uses **one OpenAI request**. A malformed or invalid response can trigger **one additional validation retry**; invalid picks are withheld if that retry also fails. Each request has a 25-second timeout and SDK retries are disabled. API failures do not trigger automatic retry loops. The timeout applies per request, not to the complete interaction.
 
-- Manual entry is the default. Saved-profile selection appears after two profiles exist.
-- One shared pick appears first, followed by alternatives without repeating the top pick.
-- Editing either viewer or viewing preferences clears stale results. Every successful shared pick is remembered for the full browser session, even across input changes. Use **Start a fresh movie session** to clear that history.
-- Shared picks use structured JSON output with three distinct slots and a best pick drawn from those slots. Invalid responses, blocked titles and invented candidate IDs trigger one retry; persistently invalid results are withheld. Each pick explains its connection to each viewer and a possible drawback. Each explanation must explicitly mention a favourite from the correct viewer; this check rejects unanchored or misattributed explanations, but does not prove the reasoning is accurate. Checked favourite plots are supplied to the model when available.
-- Watchlist saving needs no extra AI request.
-- With Watchmode connected, shared picks are selected only from catalogue entries retrieved for both viewers and a broader discovery lane. Genre-based ranking balances both viewers and diversifies the shortlist; this is a heuristic, not a measured enjoyment score.
-- Selected streaming services constrain shared recommendations to matching country/service metadata. Optional runtime and family restrictions also filter candidates before AI selection; unknown metadata fails these checks. Family mode uses US G/PG ratings as a guide, not a guarantee of suitability for an individual child. Rentals/purchases remain opt-in. Solo availability controls still affect labels only.
-- Without Watchmode, unrestricted shared picks can use explicitly labelled AI-only suggestions. Family/runtime/service restrictions require the catalogue. Catalogue failures or too few matches do not silently relax limits or fall back to unverified suggestions.
-- Catalogue retrieval samples 1900–2004, 2005–2017 and 2018–today separately for each discovery lane, interleaves the results, enriches at most 30 candidate entries (plus up to six seeds), and caches successful session lookups for 15 minutes. It stops starting more lookups after a 75-second search budget; a request already in progress can take longer to finish. Later rounds advance discovery pages. Availability can change; a limited search is not exhaustive proof that no matching film exists.
-- Recommendation rules, catalogue retrieval and structured results rendering live in `pair_recommendations.py`, `pair_catalogue.py` and `pair_ui.py`. The legacy solo flow remains in `app_ui.py`.
-- API errors omit sensitive request details. OpenAI calls have timeouts, bounded output and a per-session throttle. This is not a deployment-wide spending limit: add provider budgets and a shared rate limiter before unrestricted public use.
+The full supplied favourite lists go into the request. There is no separate AI taste-blueprint call or catalogue enrichment step. Saving, marking watched and giving feedback make no AI request.
 
-## Solo analysis of long lists
+The code checks the output structure, repeated or excluded titles and named favourite anchors. Those checks cannot establish whether the film or explanation will feel right to you.
 
-Solo analysis retains the full input list in both AI prompts. Numbered-list prefixes are removed without changing numeric titles such as `1917`. Up to six evenly spaced favourites (including the beginning and end) are sampled for catalogue discovery, with no extra AI title-sanitisation request. Catalogue enrichment is capped at 12 entries, uses the shared session cache, and stops starting lookups after a 35-second budget. A request already underway can finish after that budget. If discovery fails, solo completes with an explicit AI-only metadata notice. This fallback does not apply to restricted shared recommendations.
+## Check the build
 
-Solo model calls use a 25-second timeout with automatic retries disabled. The interface reports reading, catalogue lookup and writing stages, and marks failed analyses as failed rather than leaving a success indicator. Long-list mechanics and timeout recovery are tested with mocks; actual provider speed on the user's machine still requires retesting.
-
-## Validation
+From the configured Python environment:
 
 ```bash
 python -m pytest -q
 python -m pip check
 ```
 
-Tests cover guest isolation, profile persistence/deletion, owner-scoped database requests, key rejection, country/subscription filtering, example rendering, stale results, rerolls, watchlist saving, failed/incomplete model output and state clearing on sign-in/out.
+Tests cover full-list handling, output validation, repeat avoidance, feedback meanings, profile behaviour, guest isolation and mocked account interactions. They also check that a configured Watchmode key does not activate catalogue requests.
 
-AI and authentication tests use mocks. They do not prove live API access, database policy enforcement or recommendation quality.
-
-Optional browser check with Node, Playwright and Chromium installed, after starting the app:
+With a local app running and Node, Playwright and Chromium available:
 
 ```bash
 node tests/browser_smoke.cjs
 ```
 
-Override `CHROMIUM_PATH`, `MOVIETASTE_BASE_URL` or `MOVIETASTE_SCREENSHOTS` as needed. Screenshots go outside the checkout by default.
+`CHROMIUM_PATH`, `MOVIETASTE_BASE_URL` and `MOVIETASTE_SCREENSHOTS` can override browser-test settings. The browser check covers the solo landing, pair flow and labelled example on desktop and mobile.
 
-Use [docs/recommendation-checks.md](docs/recommendation-checks.md) to compare real recommendation quality. Automated checks validate rules and integration mechanics, not whether people will enjoy a film.
-
-## Before a public beta
-
-- Validate email confirmation, login, token refresh and logout against real Supabase.
-- With two real users, verify each can use the same profile name and cannot read/update/delete the other's rows, including direct REST requests and forged owner IDs.
-- Make real OpenAI recommendations; verify the model and Watchmode country/service metadata.
-- Add deployment-wide budgets, rate limits and operational monitoring. Review privacy/retention before storing histories or adding analytics.
-- Observe several pairs choosing films. Measure time to choose, acceptance, whether they watched it and whether both enjoyed it. No third-party analytics has been added.
-
-The guest workflow is locally validated. Live integrations, production RLS enforcement, deployment, spending controls and real-user recommendation quality require separate validation.
+Automated provider and account checks use mocks. Live credentials, authentication, response speed and subjective recommendation quality still need a home test. Use [the short recommendation check](docs/recommendation-checks.md) with your usual favourite list and someone you watch with.

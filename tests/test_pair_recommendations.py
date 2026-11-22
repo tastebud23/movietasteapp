@@ -2,7 +2,7 @@ import json
 from unittest.mock import Mock
 import pytest
 from pair_recommendations import (eligible, select_pair, validate_selection, RecommendationError,
-                                 balanced_score, choose_candidates, title_key)
+                                 balanced_score, choose_candidates, title_key, build_prompt)
 from pair_catalogue import retrieve_candidates
 
 
@@ -131,3 +131,43 @@ def test_catalogue_does_not_treat_recent_rows_as_older_period_matches():
     result = retrieve_candidates(get, search, details, lambda m: m, [[], []], {}, [], {})
     assert len(result) == 1  # Only the recent lane may admit this movie.
     assert details.call_count == 1
+
+
+def test_pair_prompt_retains_full_favourites_and_distinct_feedback_evidence():
+    favourites = [[f'Favourite {i}' for i in range(127)], ['Arrival', 'Get Out']]
+    memory = {
+        'saved_movies': ['Interested in this'],
+        'seen_movies': ['Seen without rating'],
+        'rejected_movies': ['Dismissed before'],
+        'disliked_movies': ['Explicitly disliked'],
+    }
+    prompt = build_prompt(['Jake', 'Friend'], favourites, {'mood': 'Something light tonight'},
+                          [], [], [memory, {}])
+    instructions, payload = prompt.split('Input data:\n', 1)
+    data = json.loads(payload)
+    assert [viewer['favourites'] for viewer in data['viewers']] == favourites
+    assert data['viewers'][0]['memory'] == memory
+    assert data['tonight']['mood'] == 'Something light tonight'
+    assert 'interest only, not enjoyment' in instructions
+    assert 'dismissals, not proof of dislike' in instructions
+    assert 'not a permanent taste change' in instructions
+    assert 'Never weaken a recommendation' in instructions
+
+
+@pytest.mark.parametrize('saved', [False, True])
+def test_pair_watchlist_confirmation_requires_successful_save(monkeypatch, saved):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    import pair_ui
+
+    ui = SimpleNamespace(
+        caption=Mock(), markdown=Mock(), write=Mock(), success=Mock(),
+        expander=Mock(side_effect=lambda *args: nullcontext()),
+        selectbox=Mock(return_value='Jake'), button=Mock(return_value=True),
+    )
+    monkeypatch.setattr(pair_ui, 'st', ui)
+    save = Mock(return_value=saved)
+    pair_ui.render_selection(json.loads(selection()), ['Jake', 'Friend'], {}, Mock(),
+                             ['Jake'], save, 'ai-only')
+    save.assert_called_once_with('Jake', 'Film A', 'saved_movies', 'pair_best_pick')
+    assert ui.success.call_count == int(saved)

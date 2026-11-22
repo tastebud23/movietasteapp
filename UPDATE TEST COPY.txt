@@ -1,48 +1,54 @@
-SOLO LOADING FIX — LATEST UPDATE
+UPDATE TO THE TASTEBUD PERSONAL BUILD
 
-If you already installed the previous shared-picker update, copy these THREE files from the newest download into your existing app folder:
-  app_ui.py (replace)
-  pair_catalogue.py (replace)
-  solo_helpers.py (NEW — must be copied too)
+Branch: codex/tastebud-personal-core
+https://github.com/tastebud23/movietasteapp/tree/codex/tastebud-personal-core
 
-Stop the running app first with Control+C. Keep .streamlit/secrets.toml and your .venv as they are. No installation changes are needed. Restart using the same working command.
+This update opens with For me: three worthwhile picks, your full favourite list and feedback that distinguishes interest, viewing and enjoyment. With someone keeps the two-person picker. Streaming and catalogue lookups are deferred.
 
-Solo mode now reads the full movie list while limiting catalogue work. A numbered list is accepted. You can retry the same long list; it shows reading, lookup and writing stages. If catalogue lookups fail or take too long, recommendations are labelled AI-only rather than continuing the old unbounded lookup loop.
+RECOMMENDED — KEEP A SEPARATE TEST COPY
+1. Choose Code > Download ZIP from the branch above.
+2. Extract the full ZIP into a NEW folder. Keep the previous working folder.
+3. Stop the running app with Control+C in its terminal.
+4. Copy your existing .streamlit/secrets.toml locally into the new folder's .streamlit directory. Keep the original file and existing .venv environment.
+5. Open the new app folder in VS Code and run it using the same Python environment as before.
 
-UPDATING THE TEST COPY YOU ALREADY HAVE
+No new dependencies, API key or model change are required. Keep the configuration that already works. An existing Watchmode key can stay; this build does not use it.
 
-No new Python packages are needed for this update.
+WINDOWS START COMMAND
+If the .venv environment is one folder above app_ui.py, the previously used command is:
+..\.venv\Scripts\python.exe -m streamlit run app_ui.py
 
-1. Download the latest ZIP from the codex/movie-taste-test branch on GitHub.
-2. Extract it into a NEW folder, separate from the test copy you currently run.
-3. In the running app's VS Code terminal, press Control+C to stop the app.
-4. From the NEW extracted folder, copy these files into your EXISTING app folder (the one containing app_ui.py):
-   app_ui.py                 Replace the old copy when Windows asks.
-   pair_recommendations.py   New file.
-   pair_catalogue.py         New file.
-   pair_ui.py                New file.
-   .gitignore                Replace the old copy to ignore local credentials.
-5. Keep your existing .streamlit folder, secrets.toml and .venv environment. Do not overwrite or delete them.
-6. Restart with the SAME command that worked previously:
-   ..\.venv\Scripts\python.exe -m streamlit run app_ui.py
+If .venv is inside the current app folder:
+.venv\Scripts\python.exe -m streamlit run app_ui.py
 
-Those instructions match the user's existing nested Windows folder and parent .venv setup. If your folders are different, ask for the matching command.
+Run from the folder containing app_ui.py. A separately extracted folder may have a different relative path to your existing environment; point the command at that environment. Do not move or overwrite .venv just to match the example.
 
-LATEST MATCHING UPDATE
-The search now samples older, middle-period and recent films separately. Explanations must name a favourite from the correct viewer. Use the same update steps above; there are no new dependencies.
+ALTERNATIVE — UPDATE THE EXISTING TEST FOLDER
+For a copy already on codex/movie-taste-test, stop the app and keep a backup of that folder. Copy these files from the NEW download into the existing app folder:
+  app_ui.py                 Replace
+  feedback.py               Add
+  solo_recommendations.py   Add
+  storage.py                Replace
+  pair_recommendations.py   Replace
+  pair_ui.py                Replace
 
-WHAT TO CHECK
-- Open Tonight's preferences (optional).
-- Leave services blank and choose Adults / Any length for the first run.
-- Enter both people's favourites, then choose Find our movie.
-- When Watchmode is configured, the app chooses from checked catalogue entries. Otherwise it clearly labels AI-only suggestions.
-- Each pick now has an explanation for each viewer and a possible drawback.
-- Open Two alternatives to see the other options.
-- Try several rounds. Earlier titles should not return during this session.
-- Select your services and a time limit; all suggested films must meet those checked metadata restrictions.
-- Family night admits only confirmed US G/PG entries as a guide. Check local age guidance too.
-- Start a fresh movie session clears suggested-film history; it does not delete saved profiles.
+Keep all the other existing files, including accounts.py, solo_helpers.py, availability.py and the theme. Leave .streamlit/secrets.toml and .venv in place. The full branch ZIP is preferable if you are unsure which version you have.
 
-A narrow search may find fewer than three eligible films. The app explains this instead of ignoring limits. Removing a limit is your choice.
+If you already work with Git, use the codex/tastebud-personal-core branch in a separate checkout or after preserving your local work. This update should not overwrite uncommitted changes or local configuration.
 
-Do not share secrets.toml, paste keys into chat or upload that file to GitHub.
+SAVED PROFILES
+No SQL migration is required for an existing movietaste_* installation. New feedback is added as events in movietaste_recommendation_events; existing movietaste_movie_feedback rows remain intact and provide the baseline.
+
+Older unprefixed tables such as profiles and movie_feedback remain untouched and are not read by this build. This update does not migrate their data. Guest profiles are temporary; signed-in profiles persist through the configured account.
+
+QUICK CHECK AFTER RESTARTING
+- Confirm the landing page says Find your next good film. and opens For me.
+- Try your usual full favourite list and judge the three picks.
+- Try another round and check that earlier suggestions do not repeat.
+- With a saved profile, save one film, mark another seen, and use Liked it only for a film you enjoyed.
+- Add or change Tonight’s mood; the old result should clear.
+- Open With someone and try two favourite lists.
+
+A valid round uses one OpenAI request. Invalid output can trigger one additional validation retry. Each request has a 25-second timeout and SDK retries are off. Real speed and recommendation quality still need checking on your machine.
+
+Keep secrets.toml local. Do not paste keys into chat or commit the file to GitHub.

@@ -1,13 +1,10 @@
 """Rendering for validated shared picks; no parsing of model prose."""
 import streamlit as st
-from pair_recommendations import title_key
+from pair_recommendations import SLOTS, title_key
 
 
 def render_selection(selection, names, metadata, card, profiles, save, mode):
-    if mode == 'catalogue':
-        st.caption('Chosen from checked movie entries. Availability can change; confirm with your provider.')
-    else:
-        st.info('AI-only suggestions: movie details, age suitability and streaming availability have not been verified.')
+    st.caption('Film details are generated and may need checking.')
     best = selection['best_slot']
     def show(slot, primary=False):
         pick = selection['picks'][slot]
@@ -16,9 +13,8 @@ def render_selection(selection, names, metadata, card, profiles, save, mode):
     st.markdown('## 🎯 This is the one')
     show(best, primary=True)
     with st.expander('Two alternatives'):
-        for slot, label in [('safe', 'Easy win'), ('compromise', 'Middle ground'), ('wildcard', 'Curveball')]:
+        for slot in SLOTS:
             if slot != best:
-                st.markdown('### ' + label)
                 show(slot)
     with st.expander('Why this works for both of you'):
         st.write(selection['summary'])
@@ -31,7 +27,7 @@ def render_selection(selection, names, metadata, card, profiles, save, mode):
     if profiles:
         destination = st.selectbox('Save tonight’s pick to a watchlist', profiles, key='pair_save_profile')
         if st.button('Save this film', key='save_pair_pick'):
-            save(destination, selection['picks'][best]['title'], 'saved_movies', 'pair_best_pick')
-            st.success(f'Saved to {destination}’s watchlist.')
+            if save(destination, selection['picks'][best]['title'], 'saved_movies', 'pair_best_pick') is True:
+                st.success(f'Saved to {destination}’s watchlist.')
     else:
         st.caption('Create a profile below to keep this pick for this session.')
